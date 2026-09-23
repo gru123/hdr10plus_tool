@@ -1,5 +1,5 @@
 # hdr10plus_tool [![CI](https://github.com/quietvoid/hdr10plus_tool/workflows/CI/badge.svg)](https://github.com/quietvoid/hdr10plus_tool/actions/workflows/ci.yml) [![Artifacts](https://github.com/quietvoid/hdr10plus_tool/workflows/Artifacts/badge.svg)](https://github.com/quietvoid/hdr10plus_tool/actions/workflows/release.yml)
-CLI utility to work with HDR10+ in HEVC files.  
+CLI utility to work with HDR10+ in HEVC and AV1 files.  
 Previously named `hdr10plus_parser`, now it's more than just a parser.
 
 &nbsp;
@@ -21,14 +21,15 @@ Options that apply to the commands:
 
 ## Commands
 * ### **extract**
-    Extracts the HDR10+ metadata from a HEVC file to a JSON file.  
+    Extracts the HDR10+ metadata from a HEVC or AV1 file to a JSON file.  
     Also calculates the scene information for compatibility with Samsung tools.  
 
     If no output is specified, the file is only parsed partially to verify presence of metadata.
 
     Input file:
     - HEVC bitstream
-    - Matroska: MKV file containing a HEVC video track.
+    - AV1 bitstream: low overhead OBU stream or IVF file, recognised by its content rather than its extension.
+    - Matroska: MKV file containing a HEVC or AV1 video track.
 
 
     **Flags**:
@@ -42,6 +43,9 @@ Options that apply to the commands:
 
     # Directly using MKV file
     hdr10plus_tool extract video.mkv -o metadata.json
+
+    # AV1
+    hdr10plus_tool extract video.av1 -o metadata.json
     ```
     ```console
     ffmpeg -i input.mkv -map 0:v:0 -c copy -bsf:v hevc_mp4toannexb -f hevc - | hdr10plus_tool extract -o metadata.json -
@@ -55,21 +59,27 @@ Options that apply to the commands:
 &nbsp;
 * ### **inject**
     Interleaves HDR10+ metadata NAL units before slices in an HEVC encoded bitstream.  
+    For AV1, one metadata OBU goes before the first frame of each temporal unit, in an OBU stream or IVF file; the output keeps the container of the input.  
     `--verify` has no effect with this command.
     
     **Example**:  
     ```console
     hdr10plus_tool inject -i video.hevc -j metadata.json -o injected_output.hevc
+
+    hdr10plus_tool inject -i video.ivf -j metadata.json -o injected_output.ivf
     ```
 
 &nbsp;
 * ### **remove**
-    Removes HDR10+ metadata NAL units (or SEI messages) in an HEVC encoded bitstream.  
+    Removes HDR10+ metadata NAL units (or SEI messages) in an HEVC encoded bitstream, or the metadata OBUs in an AV1 one.  
+    AV1 input may also be a Matroska file, written out as an OBU stream.  
     `--verify` has no effect with this command.
     
     **Example**:  
     ```console
     hdr10plus_tool remove video.hevc -o hdr10plus_removed_output.hevc
+
+    hdr10plus_tool remove video.mkv -o hdr10plus_removed_output.av1
     ```
     ```console
     ffmpeg -i input.mkv -map 0:v:0 -c copy -bsf:v hevc_mp4toannexb -f hevc - | hdr10plus_tool remove -
