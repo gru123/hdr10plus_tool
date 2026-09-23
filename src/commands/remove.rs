@@ -11,7 +11,7 @@ use indicatif::ProgressBar;
 use hevc_parser::io::{IoFormat, IoProcessor};
 
 use super::{CliOptions, RemoveArgs, input_from_either};
-use crate::core::{initialize_progress_bar, prefix_sei_removed_hdr10plus_nalu};
+use crate::core::{av1, initialize_progress_bar, prefix_sei_removed_hdr10plus_nalu};
 
 pub struct Remover {
     input: PathBuf,
@@ -27,6 +27,15 @@ impl Remover {
             output,
         } = args;
         let input = input_from_either("remove", input, input_pos)?;
+
+        let stdin = match av1::Input::open(&input)? {
+            av1::Input::Av1(mut av1) => {
+                let output =
+                    output.unwrap_or_else(|| av1.default_output("hdr10plus_removed_output"));
+                return av1.remove(&output);
+            }
+            av1::Input::Other(stdin) => stdin,
+        };
 
         let format = hevc_parser::io::format_from_path(&input)?;
 
@@ -50,10 +59,16 @@ impl Remover {
             ),
         };
 
-        remover.process_input(&format)
+        remover.process_input(&format, stdin)
     }
 
-    pub fn process_input(&mut self, format: &IoFormat) -> Result<()> {
+    /// `stdin`: a reader over stdin that already holds the bytes read to
+    /// tell AV1 from HEVC. Those cannot be read from stdin a second time.
+    pub fn process_input(
+        &mut self,
+        format: &IoFormat,
+        stdin: Option<Box<dyn BufRead>>,
+    ) -> Result<()> {
         let chunk_size = 100_000;
 
         let processor_opts = HevcProcessorOpts {
@@ -62,8 +77,10 @@ impl Remover {
         };
         let mut processor = HevcProcessor::new(format.clone(), processor_opts, chunk_size);
 
-        let stdin = std::io::stdin();
-        let mut reader = Box::new(stdin.lock()) as Box<dyn BufRead>;
+        let mut reader = match stdin {
+            Some(reader) => reader,
+            None => Box::new(std::io::stdin().lock()) as Box<dyn BufRead>,
+        };
 
         if let IoFormat::Raw = format {
             let file = File::open(&self.input)?;

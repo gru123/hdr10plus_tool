@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufWriter, Write, stdout};
+use std::io::{BufRead, BufWriter, Write, stdout};
 use std::path::PathBuf;
 
 use anyhow::{Result, bail, ensure};
@@ -16,9 +16,12 @@ use processor::{HevcProcessor, HevcProcessorOpts};
 use hdr10plus::metadata::Hdr10PlusMetadata;
 use hdr10plus::metadata_json::generate_json;
 
+use av1_parser::TemporalUnit;
+use av1_parser::io::processor::Av1ProcessorOpts;
+
 use crate::CliOptions;
 
-use super::{ParserError, st2094_40_sei_msg};
+use super::{ParserError, av1, st2094_40_sei_msg};
 
 pub const TOOL_NAME: &str = env!("CARGO_PKG_NAME");
 pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -68,7 +71,13 @@ impl Parser {
         }
     }
 
-    pub fn process_input(&mut self, format: &IoFormat) -> Result<()> {
+    /// `stdin`: a reader over stdin that already holds the bytes read to
+    /// tell AV1 from HEVC. Those cannot be read from stdin a second time.
+    pub fn process_input(
+        &mut self,
+        format: &IoFormat,
+        stdin: Option<Box<dyn BufRead>>,
+    ) -> Result<()> {
         let chunk_size = 100_000;
 
         let processor_opts = HevcProcessorOpts {
@@ -78,6 +87,10 @@ impl Parser {
         };
         let mut processor = HevcProcessor::new(format.clone(), processor_opts, chunk_size);
 
+        if let Some(mut stdin) = stdin {
+            return processor.process_io(&mut stdin, self);
+        }
+
         let file_path = if let IoFormat::RawStdin = format {
             None
         } else {
@@ -85,6 +98,17 @@ impl Parser {
         };
 
         processor.process_file(self, file_path)
+    }
+
+    /// Extract from an AV1 stream. Its temporal units come in presentation
+    /// order, so there is nothing to reorder.
+    pub fn process_av1_input(&mut self, input: &mut av1::Av1Input) -> Result<()> {
+        let opts = Av1ProcessorOpts {
+            limit: self.parser_opts.limit,
+            ..Default::default()
+        };
+
+        input.process(opts, self)
     }
 
     pub fn add_hdr10plus_sei(&mut self, nals: &[NALUnit], chunk: &[u8]) -> Result<()> {
@@ -290,5 +314,68 @@ impl IoProcessor for Parser {
         }
 
         Ok(())
+    }
+}
+
+impl av1_parser::io::IoProcessor for Parser {
+    fn input(&self) -> &PathBuf {
+        &self.input
+    }
+
+    fn update_progress(&mut self, delta: u64) {
+        self.progress_bar.inc(delta);
+    }
+
+    fn process_temporal_unit(&mut self, tu: TemporalUnit) -> Result<()> {
+        let metadata = tu
+            .obus
+            .iter()
+            .find_map(|obu| av1::hdr10plus_t35(obu, self.options.validate))
+            .map(|t35| {
+                // Stored the way the HEVC path stores SEI payloads, with
+                // emulation prevention, which parse_metadata_list takes off
+                // again: the round trip gives back the bytes exactly.
+                let mut bytes = t35.to_vec();
+                add_start_code_emulation_prevention_3_byte(&mut bytes);
+                bytes
+            });
+
+        // As for HEVC: the stream has to start with metadata, and --verify
+        // only asks whether it does
+        if metadata.is_none() && self.hdr10plus_sei_list.is_empty() {
+            bail!(ParserError::NoMetadataFound);
+        } else if metadata.is_some() && self.options.verify {
+            bail!(ParserError::MetadataDetected);
+        }
+
+        self.hdr10plus_sei_list.push(MetadataFrame {
+            decoded_index: tu.index,
+            presentation_number: tu.index as usize,
+            metadata,
+        });
+
+        Ok(())
+    }
+
+    fn finalize(&mut self) -> Result<()> {
+        self.progress_bar.finish_and_clear();
+
+        if self.hdr10plus_sei_list.is_empty() {
+            bail!(ParserError::NoMetadataFound);
+        }
+
+        // Same behaviour as FFmpeg: a frame without metadata takes the previous one
+        if self.hdr10plus_sei_list.iter().any(|e| e.metadata.is_none()) {
+            self.fill_metadata_gaps();
+        }
+
+        let ordered_sei_list = self
+            .hdr10plus_sei_list
+            .iter()
+            .map(|e| e.metadata.as_ref().unwrap())
+            .collect();
+        let final_metadata = self.parse_metadata_list(&ordered_sei_list)?;
+
+        self.write_json(final_metadata)
     }
 }

@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write, stdout};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use hevc_parser::utils::{
@@ -15,6 +15,7 @@ use processor::{HevcProcessor, HevcProcessorOpts};
 use hdr10plus::metadata_json::{Hdr10PlusJsonMetadata, MetadataJsonRoot};
 
 use crate::commands::InjectArgs;
+use crate::core::av1;
 use crate::core::{initialize_progress_bar, st2094_40_sei_msg};
 
 use super::{CliOptions, input_from_either};
@@ -94,6 +95,23 @@ impl Injector {
 
     pub fn inject_json(args: InjectArgs, cli_options: CliOptions) -> Result<()> {
         let input = input_from_either("inject", args.input.clone(), args.input_pos.clone())?;
+
+        // Injection rewrites a raw stream, for AV1 as for HEVC: an AV1 file on
+        // disk, raw or IVF. Nothing from Matroska or a pipe.
+        if let av1::Input::Av1(mut av1) = av1::Input::open(&input)? {
+            if av1.format() == av1_parser::io::IoFormat::Matroska || input == Path::new("-") {
+                bail!(
+                    "Injector: Must be a raw HEVC or AV1 bitstream file; \
+                     Matroska and piped input are not supported for injection"
+                );
+            }
+
+            let output = args
+                .output
+                .unwrap_or_else(|| av1.default_output("injected_output"));
+            return av1.inject(&args.json, &output, cli_options.validate);
+        }
+
         let format = hevc_parser::io::format_from_path(&input)?;
 
         if let IoFormat::Raw = format {
