@@ -1,9 +1,11 @@
-name: Build AV1 Support
+name: Build and Release AV1 Support
 
 on:
   push:
     branches:
       - av1-support
+    tags:
+      - 'v*' # Wyzwalaj tylko przy wypychaniu tagów rozpoczynających się od v
   workflow_dispatch:
 
 jobs:
@@ -27,13 +29,15 @@ jobs:
             target: aarch64-apple-darwin
             artifact_name: hdr10plus_tool
             asset_name: hdr10plus_tool-macos-arm64
-
+            
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # Wymagane do tworzenia wydań i przesyłania zasobów
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Instalacja zależności systemowych (tylko Linux wymaga fontconfig)
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -57,9 +61,11 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      # Kluczowy krok: przesyłaj tylko sam plik wykonywalny, a nie cały folder
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      # Użyj softprops/action-gh-release do przesłania do GitHub Releases
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') # Wykonuj tylko przy wypychaniu tagów
         with:
-          name: ${{ matrix.asset_name }}
-          path: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          files: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          # Opcjonalnie: automatycznie generuj informacje o wydaniu
+          generate_release_notes: true
