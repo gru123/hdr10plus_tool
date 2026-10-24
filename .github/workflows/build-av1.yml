@@ -23,11 +23,10 @@ jobs:
             target: x86_64-apple-darwin
             artifact_name: hdr10plus_tool
             asset_name: hdr10plus_tool-macos-x64
-          # Jeśli chcesz także obsługiwać Apple Silicon (M1/M2), odkomentuj poniższe
-          # - os: macos-latest
-          #   target: aarch64-apple-darwin
-          #   artifact_name: hdr10plus_tool
-          #   asset_name: hdr10plus_tool-macos-arm64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: hdr10plus_tool
+            asset_name: hdr10plus_tool-macos-arm64
 
     runs-on: ${{ matrix.os }}
     steps:
