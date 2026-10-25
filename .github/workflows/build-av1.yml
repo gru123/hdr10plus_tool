@@ -62,11 +62,16 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      # Użyj softprops/action-gh-release do przesłania do GitHub Releases
+      - name: Rename binary for release
+        shell: bash
+        run: |
+          mkdir -p release_assets
+          cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" \
+             "release_assets/${{ matrix.asset_name }}"
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') # Wykonuj tylko przy wypychaniu tagów
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
-          asset_name: ${{ matrix.asset_name }}   # ← to sprawia, że plik w Releases ma nazwę z systemem
-          generate_release_notes: false           # ← wyłącz, żeby nie było duplikatów
+          files: release_assets/${{ matrix.asset_name }}
+          generate_release_notes: false
