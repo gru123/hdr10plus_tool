@@ -62,7 +62,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Rename binary for release
+      - name: Prepare release asset
         shell: bash
         run: |
           mkdir -p release_assets
