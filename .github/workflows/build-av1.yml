@@ -62,10 +62,16 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       # Użyj softprops/action-gh-release do przesłania do GitHub Releases
+      - name: Prepare release asset
+        shell: bash
+        run: |
+          mkdir -p release_assets
+          cp "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" \
+             "release_assets/${{ matrix.asset_name }}"
+
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/') # Wykonuj tylko przy wypychaniu tagów
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
-          # Opcjonalnie: automatycznie generuj informacje o wydaniu
-          generate_release_notes: true
+          files: release_assets/${{ matrix.asset_name }}
+          generate_release_notes: false
